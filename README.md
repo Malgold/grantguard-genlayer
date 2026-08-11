@@ -1,13 +1,24 @@
 # GrantGuard
 
-GrantGuard is a reusable GenLayer Intelligent Contract for adjudicating
-open-source grant milestones from public evidence. It binds the grant brief,
+GrantGuard is a complete GenLayer application for adjudicating open-source grant
+milestones from public evidence. Its Intelligent Contract binds the grant brief,
 beneficiary, repository, and rubric before evidence is submitted, then asks
 independent GenLayer validators to inspect the same live sources and agree on a
-structured `PASS`, `FAIL`, or `INSUFFICIENT` verdict.
+structured `PASS`, `FAIL`, or `INSUFFICIENT` verdict. The accompanying web app
+gives sponsors, builders, and reviewers a real transaction workbench.
 
-The contract is a decision primitive rather than a full application. A grant
-program, DAO, or escrow can read a GrantGuard verdict before releasing funds.
+A grant program, DAO, or escrow can read the finalized GrantGuard verdict before
+releasing funds.
+
+## Live deployment
+
+- StudioNet contract: [`0x3f830e42594BD6A435180D7dC080a84077b88580`](https://explorer-studio.genlayer.com/address/0x3f830e42594BD6A435180D7dC080a84077b88580)
+- Network: GenLayer StudioNet, chain ID `61999`
+- Frontend: deployment URL will be added after the release is promoted
+
+The frontend detects Rabby through the standard EIP-1193 provider, switches to
+StudioNet, reads live contract state, submits all three lifecycle transactions,
+and tracks each write through consensus and finality with explorer links.
 
 ## The trust problem
 
@@ -69,6 +80,9 @@ contracts/grant_guard.py       Intelligent Contract
 tests/direct/test_grant_guard.py
 deploy/deployScript.ts         GenLayer CLI deployment script
 .github/workflows/ci.yml       Contract lint and direct tests
+web/app/GrantGuardApp.tsx      Rabby-connected transaction workbench
+web/tests/                     Server-rendered product checks
+PROJECT_SUBMISSION.md          Reviewer-oriented evidence and product delta
 ```
 
 ## Local verification
@@ -85,6 +99,11 @@ pytest tests/direct/ -v
 corepack enable
 pnpm install --frozen-lockfile
 pnpm typecheck
+
+cd web
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm test
 ```
 
 The direct tests mock both web pages and LLM responses, so they do not require a
