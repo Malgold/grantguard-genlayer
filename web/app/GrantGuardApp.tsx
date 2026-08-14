@@ -99,6 +99,32 @@ type WalletAccount = Extract<
   NonNullable<Parameters<typeof createClient>[0]>["account"],
   string
 >;
+type TransactionHash = Parameters<
+  typeof readClient.waitForTransactionReceipt
+>[0]["hash"];
+
+async function waitForFinalizedTransaction(hash: TransactionHash) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await readClient.waitForTransactionReceipt({
+        hash,
+        status: TransactionStatus.FINALIZED,
+        interval: 1500,
+        retries: 60,
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+      }
+    }
+  }
+  throw new Error(
+    "The transaction was submitted, but StudioNet status polling is temporarily unavailable. " +
+      errorMessage(lastError, "Refresh the audit trail to verify finality."),
+  );
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (value instanceof Map) {
@@ -309,12 +335,7 @@ export default function GrantGuardApp() {
         stage: "consensus",
         message: "Signed. GenLayer validators are reaching consensus.",
       });
-      const receipt = await readClient.waitForTransactionReceipt({
-        hash,
-        status: TransactionStatus.FINALIZED,
-        interval: 1500,
-        retries: 240,
-      });
+      const receipt = await waitForFinalizedTransaction(hash);
       const execution = String(receipt.txExecutionResultName ?? "");
       if (execution.includes("ERROR")) {
         throw new Error("Consensus finalized, but contract execution failed.");
