@@ -17,6 +17,58 @@ type EthereumProvider = {
   removeListener?(event: string, listener: (...args: unknown[]) => void): void;
 };
 
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
+}
+
+function errorCode(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+  const code = Number((error as { code?: unknown }).code);
+  return Number.isFinite(code) ? code : undefined;
+}
+
+async function switchToStudioNet(provider: EthereumProvider) {
+  const chainId = `0x${studionet.id.toString(16)}`;
+  const currentChainId = String(
+    await provider.request({ method: "eth_chainId" }),
+  );
+  if (currentChainId.toLowerCase() === chainId.toLowerCase()) return;
+
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId }],
+    });
+  } catch (error) {
+    if (errorCode(error) !== 4902) throw error;
+    await provider.request({
+      method: "wallet_addEthereumChain",
+      params: [
+        {
+          chainId,
+          chainName: studionet.name,
+          nativeCurrency: studionet.nativeCurrency,
+          rpcUrls: [...studionet.rpcUrls.default.http],
+          blockExplorerUrls: studionet.blockExplorers?.default.url
+            ? [studionet.blockExplorers.default.url]
+            : [],
+        },
+      ],
+    });
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId }],
+    });
+  }
+}
+
 declare global {
   interface Window {
     ethereum?: EthereumProvider;
@@ -204,6 +256,7 @@ export default function GrantGuardApp() {
       throw new Error("Rabby did not return an account.");
     }
     const address = String(accounts[0]) as WalletAccount;
+    await switchToStudioNet(provider);
     const client = createClient({
       chain: studionet,
       account: address,
@@ -212,7 +265,6 @@ export default function GrantGuardApp() {
           NonNullable<Parameters<typeof createClient>[0]>["provider"]
         >,
     });
-    await client.connect("studionet");
     setWallet(address);
     setWalletClient(client);
     setWalletMessage(
@@ -280,8 +332,7 @@ export default function GrantGuardApp() {
         label,
         hash: current?.hash ?? "",
         stage: "error",
-        message:
-          error instanceof Error ? error.message : "The transaction failed.",
+        message: errorMessage(error, "The transaction failed."),
       }));
       return false;
     }
@@ -354,9 +405,7 @@ export default function GrantGuardApp() {
           type="button"
           onClick={() =>
             void connectWallet().catch((error: unknown) =>
-              setWalletMessage(
-                error instanceof Error ? error.message : "Wallet connection failed.",
-              ),
+              setWalletMessage(errorMessage(error, "Wallet connection failed.")),
             )
           }
         >
