@@ -3,7 +3,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
-import { TransactionStatus } from "genlayer-js/types";
 
 const CONTRACT_ADDRESS = "0x3f830e42594BD6A435180D7dC080a84077b88580" as const;
 const EXPLORER_URL =
@@ -93,38 +92,16 @@ type TransactionState = {
 } | null;
 
 type ActionName = "create" | "evidence" | "evaluate";
+type ContractWriteName =
+  | "create_milestone"
+  | "submit_evidence"
+  | "evaluate_milestone";
 
 const readClient = createClient({ chain: studionet });
 type WalletAccount = Extract<
   NonNullable<Parameters<typeof createClient>[0]>["account"],
   string
 >;
-type TransactionHash = Parameters<
-  typeof readClient.waitForTransactionReceipt
->[0]["hash"];
-
-async function waitForFinalizedTransaction(hash: TransactionHash) {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    try {
-      return await readClient.waitForTransactionReceipt({
-        hash,
-        status: TransactionStatus.FINALIZED,
-        interval: 1500,
-        retries: 60,
-      });
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) {
-        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
-      }
-    }
-  }
-  throw new Error(
-    "The transaction was submitted, but StudioNet status polling is temporarily unavailable. " +
-      errorMessage(lastError, "Refresh the audit trail to verify finality."),
-  );
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (value instanceof Map) {
@@ -175,6 +152,77 @@ function normalizeMilestones(raw: unknown): MilestoneRecord[] {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+async function readMilestoneRecords(): Promise<MilestoneRecord[]> {
+  const result = await readClient.readContract({
+    address: CONTRACT_ADDRESS,
+    functionName: "get_all_milestones",
+    args: [],
+  });
+  return normalizeMilestones(result);
+}
+
+function assertWriteAllowed(
+  functionName: ContractWriteName,
+  milestoneId: string,
+  records: MilestoneRecord[],
+) {
+  const current = records.find((item) => item.id === milestoneId);
+  if (functionName === "create_milestone") {
+    if (current) throw new Error(`Milestone "${milestoneId}" already exists.`);
+    return;
+  }
+  if (!current) throw new Error(`Milestone "${milestoneId}" was not found.`);
+  if (
+    functionName === "submit_evidence" &&
+    !["CREATED", "FAIL", "INSUFFICIENT"].includes(current.status)
+  ) {
+    throw new Error(`Milestone "${milestoneId}" does not accept evidence.`);
+  }
+  if (
+    functionName === "evaluate_milestone" &&
+    current.status !== "EVIDENCE_SUBMITTED"
+  ) {
+    throw new Error(`Milestone "${milestoneId}" has no pending evidence.`);
+  }
+}
+
+async function waitForActionState(
+  functionName: ContractWriteName,
+  milestoneId: string,
+  before: MilestoneRecord[],
+): Promise<MilestoneRecord[]> {
+  const previous = before.find((item) => item.id === milestoneId);
+  const timeoutMs = functionName === "evaluate_milestone" ? 360_000 : 120_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+
+  while (Date.now() < deadline) {
+    try {
+      const records = await readMilestoneRecords();
+      const current = records.find((item) => item.id === milestoneId);
+      const finalized =
+        functionName === "create_milestone"
+          ? !previous && Boolean(current)
+          : functionName === "submit_evidence"
+            ? Boolean(
+                current &&
+                  current.status === "EVIDENCE_SUBMITTED" &&
+                  current.attempt > (previous?.attempt ?? -1),
+              )
+            : Boolean(current && current.status !== "EVIDENCE_SUBMITTED");
+      if (finalized) return records;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+  }
+
+  throw new Error(
+    "The transaction was submitted, but its contract state change was not observed. " +
+      errorMessage(lastError, "Use the explorer link to inspect execution."),
+  );
+}
+
 export default function GrantGuardApp() {
   const [wallet, setWallet] = useState("");
   const [walletClient, setWalletClient] =
@@ -222,12 +270,7 @@ export default function GrantGuardApp() {
     setIsLoading(true);
     setLoadError("");
     try {
-      const result = await readClient.readContract({
-        address: CONTRACT_ADDRESS,
-        functionName: "get_all_milestones",
-        args: [],
-      });
-      setMilestones(normalizeMilestones(result));
+      setMilestones(await readMilestoneRecords());
     } catch (error) {
       setLoadError(
         error instanceof Error
@@ -312,7 +355,7 @@ export default function GrantGuardApp() {
 
   async function writeContract(
     label: string,
-    functionName: string,
+    functionName: ContractWriteName,
     args: string[],
   ) {
     setTransaction({
@@ -321,7 +364,10 @@ export default function GrantGuardApp() {
       stage: "wallet",
       message: "Confirm this transaction in Rabby.",
     });
+    let submittedHash = "";
     try {
+      const before = await readMilestoneRecords();
+      assertWriteAllowed(functionName, args[0], before);
       const writer = await getWriter();
       const hash = await writer.writeContract({
         address: CONTRACT_ADDRESS,
@@ -329,29 +375,31 @@ export default function GrantGuardApp() {
         args,
         value: BigInt(0),
       });
+      submittedHash = hash;
       setTransaction({
         label,
         hash,
         stage: "consensus",
         message: "Signed. GenLayer validators are reaching consensus.",
       });
-      const receipt = await waitForFinalizedTransaction(hash);
-      const execution = String(receipt.txExecutionResultName ?? "");
-      if (execution.includes("ERROR")) {
-        throw new Error("Consensus finalized, but contract execution failed.");
-      }
+      const finalizedRecords = await waitForActionState(
+        functionName,
+        args[0],
+        before,
+      );
       setTransaction({
         label,
         hash,
         stage: "finalized",
         message: "Finalized on StudioNet. The audit view has been refreshed.",
       });
-      await refreshMilestones();
+      setMilestones(finalizedRecords);
+      setLoadError("");
       return true;
     } catch (error) {
       setTransaction((current) => ({
         label,
-        hash: current?.hash ?? "",
+        hash: submittedHash || current?.hash || "",
         stage: "error",
         message: errorMessage(error, "The transaction failed."),
       }));
