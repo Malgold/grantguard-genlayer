@@ -10,3 +10,4 @@ htmlcov/
 work/
 outputs/
 *.tsbuildinfo
+.pnpm-store/

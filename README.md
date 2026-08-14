@@ -14,7 +14,7 @@ releasing funds.
 
 - StudioNet contract: [`0x3f830e42594BD6A435180D7dC080a84077b88580`](https://explorer-studio.genlayer.com/address/0x3f830e42594BD6A435180D7dC080a84077b88580)
 - Network: GenLayer StudioNet, chain ID `61999`
-- Frontend: deployment URL will be added after the release is promoted
+- Frontend: [grantguard-public.sckavanagh.chatgpt.site](https://grantguard-public.sckavanagh.chatgpt.site)
 
 The frontend detects Rabby through the standard EIP-1193 provider, switches to
 StudioNet, reads live contract state, submits all three lifecycle transactions,

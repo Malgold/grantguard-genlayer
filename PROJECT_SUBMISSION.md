@@ -61,6 +61,7 @@ Ordinary EVM execution cannot perform this live evidence adjudication.
 - Frontend checks: `web/tests/rendered-html.test.mjs`
 - Deployment script: `deploy/deployScript.ts`
 - Deployed contract: https://explorer-studio.genlayer.com/address/0x3f830e42594BD6A435180D7dC080a84077b88580
+- Live application: https://grantguard-public.sckavanagh.chatgpt.site
 - Baseline contract commit: `c7c5eef`
 
 ## Verification completed
